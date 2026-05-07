@@ -1,0 +1,32 @@
+name: CMake Build (Windows)
+
+# 触发条件：当代码推送到 main 分支或提交 Pull Request 时
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    # 使用 GitHub 托管的 Windows 虚拟机
+    runs-on: windows-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 配置 CMake
+      # -S . 指源码目录，-B build 指构建输出目录
+      run: cmake -S . -B build
+
+    - name: 执行编译
+      # 默认生成 Release 模式的可执行文件
+      run: cmake --build build --config Release
+
+    - name: 上传构建产物 (exe)
+      # 将生成的 exe 上传到 GitHub Actions 界面，方便下载
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-executable
+        path: build/Release/*.exe
