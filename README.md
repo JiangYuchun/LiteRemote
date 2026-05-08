@@ -26,6 +26,27 @@ LiteRemote/
 └── CMakeLists.txt     # Cross-target build definition
 ```
 
+
+## Release packaging
+
+Create and publish a GitHub Release with a tag such as `v0.1.0` to trigger the release workflow. The workflow checks out that release tag, builds the Windows-only host and client applications on `windows-latest`, creates `LiteRemote-<tag>-windows-x64.zip`, and attaches the ZIP to the same GitHub Release.
+
+You can also run the workflow manually from the GitHub Actions tab. Choose **Release Windows package**, click **Run workflow**, and provide:
+
+- `release_tag`, for example `v0.1.1`.
+- Optional `release_title`; leave it blank to use `LiteRemote <tag> — Windows Package Verification`.
+- Optional `release_notes`; leave it blank to use package-verification notes.
+- Optional `prerelease`; keep it enabled for verification-only releases.
+
+Manual runs build the same Windows ZIP and create or update the GitHub Release for the supplied tag before uploading the ZIP asset. The tag must already exist in the repository. For a second packaging verification release after `v0.1.0`, create and push `v0.1.1`, then manually run the workflow with `release_tag` set to `v0.1.1`.
+
+The release ZIP contains:
+
+- `literemote_host.exe`
+- `literemote_client.exe`
+- `README.md`
+- `LICENSE`
+
 ## Roadmap
 
 1. Cursor demo with AlphaBlend and cursor shape synchronization.

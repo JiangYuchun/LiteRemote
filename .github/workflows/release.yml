@@ -1,0 +1,169 @@
+name: Release Windows package
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to build, create/update, and attach the Windows ZIP to, for example v0.1.0"
+        required: true
+        type: string
+      release_title:
+        description: "Optional release title; defaults to a package verification title for the tag"
+        required: false
+        type: string
+      release_notes:
+        description: "Optional release notes; defaults to Windows package verification notes"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark a manually created release as a pre-release"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  windows-package:
+    name: Build and attach Windows x64 ZIP
+    runs-on: windows-latest
+
+    env:
+      BUILD_TYPE: Release
+
+    steps:
+      - name: Resolve release metadata
+        id: release-metadata
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          EVENT_TITLE: ${{ github.event.release.name }}
+          EVENT_NOTES: ${{ github.event.release.body }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+          INPUT_TITLE: ${{ inputs.release_title }}
+          INPUT_NOTES: ${{ inputs.release_notes }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          if ($env:EVENT_NAME -eq "release") {
+            $tagName = $env:EVENT_TAG
+            $releaseTitle = $env:EVENT_TITLE
+            $releaseNotes = $env:EVENT_NOTES
+            $prerelease = "false"
+          } else {
+            $tagName = $env:INPUT_TAG
+            $releaseTitle = $env:INPUT_TITLE
+            $releaseNotes = $env:INPUT_NOTES
+            $prerelease = $env:INPUT_PRERELEASE
+          }
+
+          if ([string]::IsNullOrWhiteSpace($tagName)) {
+            throw "A release tag is required to build the Windows package."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($releaseTitle)) {
+            $releaseTitle = "LiteRemote $tagName — Windows Package Verification"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($releaseNotes)) {
+            $releaseNotes = @(
+              "This release is intended to verify that the GitHub Actions release workflow can build the Windows x64 host/client executables and attach the packaged ZIP correctly."
+              ""
+              "## Package verification"
+              ""
+              '- Builds `literemote_host.exe` and `literemote_client.exe` on `windows-latest`.'
+              '- Packages both executables with `README.md` and `LICENSE`.'
+              "- Uploads ``LiteRemote-$tagName-windows-x64.zip`` to this GitHub Release."
+            ) -join [Environment]::NewLine
+          }
+
+          if ([string]::IsNullOrWhiteSpace($prerelease)) {
+            $prerelease = "false"
+          }
+
+          $packageName = "LiteRemote-$tagName-windows-x64"
+          $zipPath = "dist/$packageName.zip"
+
+          "tag=$tagName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "title=$releaseTitle" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "package_name=$packageName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "zip_path=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "prerelease=$($prerelease.ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "notes<<__LITEREMOTE_RELEASE_NOTES__" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $releaseNotes | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "__LITEREMOTE_RELEASE_NOTES__" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release-metadata.outputs.tag }}
+
+      - name: Configure CMake
+        run: >-
+          cmake -S . -B build
+          -G "Visual Studio 17 2022"
+          -A x64
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Build host and client
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Stage package files
+        shell: pwsh
+        run: |
+          $packageDir = Join-Path $PWD "dist/${{ steps.release-metadata.outputs.package_name }}"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+
+          Copy-Item "build/${{ env.BUILD_TYPE }}/literemote_host.exe" $packageDir
+          Copy-Item "build/${{ env.BUILD_TYPE }}/literemote_client.exe" $packageDir
+          Copy-Item "README.md" $packageDir
+          Copy-Item "LICENSE" $packageDir
+
+      - name: Create ZIP package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "dist/${{ steps.release-metadata.outputs.package_name }}" -DestinationPath "${{ steps.release-metadata.outputs.zip_path }}" -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release-metadata.outputs.package_name }}
+          path: ${{ steps.release-metadata.outputs.zip_path }}
+          if-no-files-found: error
+
+      - name: Create or update manual GitHub Release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release-metadata.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.release-metadata.outputs.title }}
+          RELEASE_NOTES: ${{ steps.release-metadata.outputs.notes }}
+          RELEASE_PRERELEASE: ${{ steps.release-metadata.outputs.prerelease }}
+        shell: pwsh
+        run: |
+          $notesPath = Join-Path $env:RUNNER_TEMP "literemote-release-notes.md"
+          $env:RELEASE_NOTES | Out-File -FilePath $notesPath -Encoding utf8
+
+          $prereleaseArgs = @()
+          if ($env:RELEASE_PRERELEASE -eq "true") {
+            $prereleaseArgs += "--prerelease"
+          }
+
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit $env:RELEASE_TAG --title $env:RELEASE_TITLE --notes-file $notesPath @prereleaseArgs
+          } else {
+            gh release create $env:RELEASE_TAG --verify-tag --title $env:RELEASE_TITLE --notes-file $notesPath @prereleaseArgs
+          }
+
+      - name: Attach ZIP package to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release upload "${{ steps.release-metadata.outputs.tag }}" "${{ steps.release-metadata.outputs.zip_path }}" --clobber
