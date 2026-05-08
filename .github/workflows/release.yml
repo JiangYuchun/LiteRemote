@@ -1,0 +1,82 @@
+name: Release Windows package
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: "Upload package to the GitHub Release matching the selected ref/tag"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  windows-package:
+    name: Build and package Windows x64 binaries
+    runs-on: windows-latest
+
+    env:
+      BUILD_TYPE: Release
+      PACKAGE_NAME: LiteRemote-${{ github.ref_name }}-windows-x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: >-
+          cmake -S . -B build
+          -G "Visual Studio 17 2022"
+          -A x64
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Build host and client
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Stage package files
+        shell: pwsh
+        run: |
+          $packageDir = Join-Path $PWD "dist/${{ env.PACKAGE_NAME }}"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+
+          Copy-Item "build/${{ env.BUILD_TYPE }}/literemote_host.exe" $packageDir
+          Copy-Item "build/${{ env.BUILD_TYPE }}/literemote_client.exe" $packageDir
+          Copy-Item "README.md" $packageDir
+          Copy-Item "LICENSE" $packageDir
+
+      - name: Create ZIP package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "dist/${{ env.PACKAGE_NAME }}" -DestinationPath "dist/${{ env.PACKAGE_NAME }}.zip" -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}
+          path: dist/${{ env.PACKAGE_NAME }}.zip
+          if-no-files-found: error
+
+      - name: Upload package to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release' || inputs.upload_to_release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tagName = "${{ github.ref_name }}"
+          $packagePath = "dist/${{ env.PACKAGE_NAME }}.zip"
+
+          gh release view $tagName *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tagName --title "LiteRemote $tagName" --notes "Automated Windows x64 binary package for LiteRemote $tagName."
+          }
+
+          gh release upload $tagName $packagePath --clobber
