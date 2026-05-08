@@ -26,6 +26,25 @@ LiteRemote/
 └── CMakeLists.txt     # Cross-target build definition
 ```
 
+
+## Release packaging
+
+Create a version tag such as `v0.1.0` and push it to GitHub to run the release workflow:
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow runs when you push a `v*` tag or publish a GitHub Release. It builds the Windows-only host and client applications on `windows-latest`, creates `LiteRemote-<tag>-windows-x64.zip`, stores it as a workflow artifact, and uploads the ZIP to the GitHub Release for that tag. The package contains:
+
+- `literemote_host.exe`
+- `literemote_client.exe`
+- `README.md`
+- `LICENSE`
+
+You can also run the workflow manually from the GitHub Actions tab with `workflow_dispatch`. Enable `upload_to_release` only when the selected ref name matches an existing release tag or when you want the workflow to create a release for that ref name.
+
 ## Roadmap
 
 1. Cursor demo with AlphaBlend and cursor shape synchronization.
